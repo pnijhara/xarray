@@ -3,7 +3,7 @@ import itertools
 from collections import OrderedDict, defaultdict
 from datetime import timedelta
 from distutils.version import LooseVersion
-from typing import Any, Hashable, Mapping, MutableMapping, Union
+from typing import Any, Hashable, Mapping, Union
 
 import numpy as np
 import pandas as pd
@@ -18,9 +18,9 @@ from .indexing import (
     VectorizedIndexer,
     as_indexable,
 )
+from .npcompat import IS_NEP18_ACTIVE
 from .options import _get_keep_attrs
 from .pycompat import dask_array_type, integer_types
-from .npcompat import IS_NEP18_ACTIVE
 from .utils import (
     OrderedSet,
     decode_numpy_dict_values,
@@ -266,6 +266,8 @@ class Variable(
     form of a Dataset or DataArray should almost always be preferred, because
     they can use more complete metadata in context of coordinate labels.
     """
+
+    __slots__ = ("_dims", "_data", "_attrs", "_encoding")
 
     def __init__(self, dims, data, attrs=None, encoding=None, fastpath=False):
         """
@@ -710,8 +712,7 @@ class Variable(
                 actual_indexer = indexer
 
             data = as_indexable(self._data)[actual_indexer]
-            chunks_hint = getattr(data, "chunks", None)
-            mask = indexing.create_mask(indexer, self.shape, chunks_hint)
+            mask = indexing.create_mask(indexer, self.shape, data)
             data = duck_array_ops.where(mask, fill_value, data)
         else:
             # array cannot be indexed along dimensions of size 0, so just
@@ -1225,16 +1226,6 @@ class Variable(
     def T(self) -> "Variable":
         return self.transpose()
 
-    def expand_dims(self, *args):
-        import warnings
-
-        warnings.warn(
-            "Variable.expand_dims is deprecated: use " "Variable.set_dims instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.expand_dims(*args)
-
     def set_dims(self, dims, shape=None):
         """Return a new variable with given set of dimensions.
         This method might be used to attach new dimension(s) to variable.
@@ -1601,7 +1592,7 @@ class Variable(
         """
         return self.broadcast_equals(other, equiv=duck_array_ops.array_notnull_equiv)
 
-    def quantile(self, q, dim=None, interpolation="linear"):
+    def quantile(self, q, dim=None, interpolation="linear", keep_attrs=None):
         """Compute the qth quantile of the data along the specified dimension.
 
         Returns the qth quantiles(s) of the array elements.
@@ -1624,6 +1615,10 @@ class Variable(
                 * higher: ``j``.
                 * nearest: ``i`` or ``j``, whichever is nearest.
                 * midpoint: ``(i + j) / 2``.
+        keep_attrs : bool, optional
+            If True, the variable's attributes (`attrs`) will be copied from
+            the original object to the new one.  If False (default), the new
+            object will be returned without attributes.
 
         Returns
         -------
@@ -1632,7 +1627,7 @@ class Variable(
             is a scalar. If multiple percentiles are given, first axis of
             the result corresponds to the quantile and a quantile dimension
             is added to the return array. The other dimensions are the
-             dimensions that remain after the reduction of the array.
+            dimensions that remain after the reduction of the array.
 
         See Also
         --------
@@ -1660,14 +1655,19 @@ class Variable(
             axis = None
             new_dims = []
 
-        # only add the quantile dimension if q is array like
+        # Only add the quantile dimension if q is array-like
         if q.ndim != 0:
             new_dims = ["quantile"] + new_dims
 
         qs = np.nanpercentile(
             self.data, q * 100.0, axis=axis, interpolation=interpolation
         )
-        return Variable(new_dims, qs)
+
+        if keep_attrs is None:
+            keep_attrs = _get_keep_attrs(default=False)
+        attrs = self._attrs if keep_attrs else None
+
+        return Variable(new_dims, qs, attrs)
 
     def rank(self, dim, pct=False):
         """Ranks the data.
@@ -1697,18 +1697,24 @@ class Variable(
         """
         import bottleneck as bn
 
-        if isinstance(self.data, dask_array_type):
+        data = self.data
+
+        if isinstance(data, dask_array_type):
             raise TypeError(
                 "rank does not work for arrays stored as dask "
                 "arrays. Load the data via .compute() or .load() "
                 "prior to calling this method."
             )
+        elif not isinstance(data, np.ndarray):
+            raise TypeError(
+                "rank is not implemented for {} objects.".format(type(data))
+            )
 
         axis = self.get_axis_num(dim)
         func = bn.nanrankdata if self.dtype.kind == "f" else bn.rankdata
-        ranked = func(self.data, axis=axis)
+        ranked = func(data, axis=axis)
         if pct:
-            count = np.sum(~np.isnan(self.data), axis=axis, keepdims=True)
+            count = np.sum(~np.isnan(data), axis=axis, keepdims=True)
             ranked /= count
         return Variable(self.dims, ranked)
 
@@ -1930,6 +1936,8 @@ class IndexVariable(Variable):
     They also have a name property, which is the name of their sole dimension
     unless another name is given.
     """
+
+    __slots__ = ()
 
     def __init__(self, dims, data, attrs=None, encoding=None, fastpath=False):
         super().__init__(dims, data, attrs, encoding, fastpath)

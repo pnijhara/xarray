@@ -209,6 +209,7 @@ def _create_bottleneck_method(name, npmodule=np):
 
         if (
             _USE_BOTTLENECK
+            and isinstance(values, np.ndarray)
             and bn_func is not None
             and not isinstance(axis, tuple)
             and values.dtype.kind in "uifc"
@@ -236,3 +237,5 @@ nanstd = _create_bottleneck_method("nanstd")
 nanprod = _create_bottleneck_method("nanprod")
 nancumsum = _create_bottleneck_method("nancumsum")
 nancumprod = _create_bottleneck_method("nancumprod")
+nanargmin = _create_bottleneck_method("nanargmin")
+nanargmax = _create_bottleneck_method("nanargmax")

@@ -24,12 +24,12 @@ from xarray.tests import (
     assert_identical,
     raises_regex,
     requires_bottleneck,
-    requires_cftime,
     requires_dask,
     requires_iris,
     requires_np113,
     requires_numbagg,
     requires_scipy,
+    requires_sparse,
     source_ndarray,
 )
 
@@ -1002,63 +1002,53 @@ class TestDataArray:
         selected = data.isel(x=0, drop=False)
         assert_identical(expected, selected)
 
-    @pytest.mark.filterwarnings("ignore:Dataset.isel_points")
-    def test_isel_points(self):
-        shape = (10, 5, 6)
-        np_array = np.random.random(shape)
-        da = DataArray(
-            np_array, dims=["time", "y", "x"], coords={"time": np.arange(0, 100, 10)}
+    def test_head(self):
+        assert_equal(self.dv.isel(x=slice(5)), self.dv.head(x=5))
+        assert_equal(self.dv.isel(x=slice(0)), self.dv.head(x=0))
+        assert_equal(
+            self.dv.isel({dim: slice(6) for dim in self.dv.dims}), self.dv.head(6)
         )
-        y = [1, 3]
-        x = [3, 0]
-
-        expected = da.values[:, y, x]
-
-        actual = da.isel_points(y=y, x=x, dim="test_coord")
-        assert actual.coords["test_coord"].shape == (len(y),)
-        assert list(actual.coords) == ["time"]
-        assert actual.dims == ("test_coord", "time")
-
-        actual = da.isel_points(y=y, x=x)
-        assert "points" in actual.dims
-        # Note that because xarray always concatenates along the first
-        # dimension, We must transpose the result to match the numpy style of
-        # concatenation.
-        np.testing.assert_equal(actual.T, expected)
-
-        # a few corner cases
-        da.isel_points(time=[1, 2], x=[2, 2], y=[3, 4])
-        np.testing.assert_allclose(
-            da.isel_points(time=[1], x=[2], y=[4]).values.squeeze(),
-            np_array[1, 4, 2].squeeze(),
+        assert_equal(
+            self.dv.isel({dim: slice(5) for dim in self.dv.dims}), self.dv.head()
         )
-        da.isel_points(time=[1, 2])
-        y = [-1, 0]
-        x = [-2, 2]
-        expected = da.values[:, y, x]
-        actual = da.isel_points(x=x, y=y).values
-        np.testing.assert_equal(actual.T, expected)
+        with raises_regex(TypeError, "either dict-like or a single int"):
+            self.dv.head([3])
+        with raises_regex(TypeError, "expected integer type"):
+            self.dv.head(x=3.1)
+        with raises_regex(ValueError, "expected positive int"):
+            self.dv.head(-3)
 
-        # test that the order of the indexers doesn't matter
-        assert_identical(da.isel_points(y=y, x=x), da.isel_points(x=x, y=y))
+    def test_tail(self):
+        assert_equal(self.dv.isel(x=slice(-5, None)), self.dv.tail(x=5))
+        assert_equal(self.dv.isel(x=slice(0)), self.dv.tail(x=0))
+        assert_equal(
+            self.dv.isel({dim: slice(-6, None) for dim in self.dv.dims}),
+            self.dv.tail(6),
+        )
+        assert_equal(
+            self.dv.isel({dim: slice(-5, None) for dim in self.dv.dims}), self.dv.tail()
+        )
+        with raises_regex(TypeError, "either dict-like or a single int"):
+            self.dv.tail([3])
+        with raises_regex(TypeError, "expected integer type"):
+            self.dv.tail(x=3.1)
+        with raises_regex(ValueError, "expected positive int"):
+            self.dv.tail(-3)
 
-        # make sure we're raising errors in the right places
-        with raises_regex(ValueError, "All indexers must be the same length"):
-            da.isel_points(y=[1, 2], x=[1, 2, 3])
-        with raises_regex(ValueError, "dimension bad_key does not exist"):
-            da.isel_points(bad_key=[1, 2])
-        with raises_regex(TypeError, "Indexers must be integers"):
-            da.isel_points(y=[1.5, 2.2])
-        with raises_regex(TypeError, "Indexers must be integers"):
-            da.isel_points(x=[1, 2, 3], y=slice(3))
-        with raises_regex(ValueError, "Indexers must be 1 dimensional"):
-            da.isel_points(y=1, x=2)
-        with raises_regex(ValueError, "Existing dimension names are not"):
-            da.isel_points(y=[1, 2], x=[1, 2], dim="x")
-
-        # using non string dims
-        actual = da.isel_points(y=[1, 2], x=[1, 2], dim=["A", "B"])
-        assert "points" in actual.coords
+    def test_thin(self):
+        assert_equal(self.dv.isel(x=slice(None, None, 5)), self.dv.thin(x=5))
+        assert_equal(
+            self.dv.isel({dim: slice(None, None, 6) for dim in self.dv.dims}),
+            self.dv.thin(6),
+        )
+        with raises_regex(TypeError, "either dict-like or a single int"):
+            self.dv.thin([3])
+        with raises_regex(TypeError, "expected integer type"):
+            self.dv.thin(x=3.1)
+        with raises_regex(ValueError, "expected positive int"):
+            self.dv.thin(-3)
+        with raises_regex(ValueError, "cannot be zero"):
+            self.dv.thin(time=0)
 
     def test_loc(self):
         self.ds["x"] = ("x", np.array(list("abcdefghij")))
@@ -1350,9 +1340,8 @@ class TestDataArray:
         )
         assert_identical(actual, expected)
 
-        with pytest.warns(FutureWarning, match="The inplace argument"):
-            with raises_regex(ValueError, "cannot reset coord"):
-                data = data.reset_coords(inplace=True)
+        with pytest.raises(TypeError):
+            data = data.reset_coords(inplace=True)
         with raises_regex(ValueError, "cannot be found"):
             data.reset_coords("foo", drop=True)
         with raises_regex(ValueError, "cannot be found"):
@@ -1454,13 +1443,11 @@ class TestDataArray:
         with raises_regex(ValueError, "different size for unlabeled"):
             foo.reindex_like(bar)
 
-    @pytest.mark.filterwarnings("ignore:Indexer has dimensions")
     def test_reindex_regressions(self):
-        # regression test for #279
-        expected = DataArray(np.random.randn(5), coords=[("time", range(5))])
+        da = DataArray(np.random.randn(5), coords=[("time", range(5))])
         time2 = DataArray(np.arange(5), dims="time2")
-        actual = expected.reindex(time=time2)
-        assert_identical(actual, expected)
+        with pytest.raises(ValueError):
+            da.reindex(time=time2)
 
         # regression test for #736, reindex can not change complex nums dtype
         x = np.array([1, 2, 3], dtype=np.complex)
@@ -1505,6 +1492,32 @@ class TestDataArray:
 
         renamed_kwargs = self.dv.x.rename(x="z").rename("z")
         assert_identical(renamed, renamed_kwargs)
+
+    def test_init_value(self):
+        expected = DataArray(
+            np.full((3, 4), 3), dims=["x", "y"], coords=[range(3), range(4)]
+        )
+        actual = DataArray(3, dims=["x", "y"], coords=[range(3), range(4)])
+        assert_identical(expected, actual)
+
+        expected = DataArray(
+            np.full((1, 10, 2), 0),
+            dims=["w", "x", "y"],
+            coords={"x": np.arange(10), "y": ["north", "south"]},
+        )
+        actual = DataArray(0, dims=expected.dims, coords=expected.coords)
+        assert_identical(expected, actual)
+
+        expected = DataArray(
+            np.full((10, 2), np.nan), coords=[("x", np.arange(10)), ("y", ["a", "b"])]
+        )
+        actual = DataArray(coords=[("x", np.arange(10)), ("y", ["a", "b"])])
+        assert_identical(expected, actual)
+
+        with raises_regex(ValueError, "different number of dim"):
+            DataArray(np.array(1), coords={"x": np.arange(10)}, dims=["x"])
+        with raises_regex(ValueError, "does not match the 0 dim"):
+            DataArray(np.array(1), coords=[("x", np.arange(10))])
 
     def test_swap_dims(self):
         array = DataArray(np.random.randn(3), {"y": ("x", list("abc"))}, "x")
@@ -1761,10 +1774,9 @@ class TestDataArray:
         obj = self.mda.reorder_levels(x=["level_2", "level_1"])
         assert_identical(obj, expected)
 
-        with pytest.warns(FutureWarning, match="The inplace argument"):
+        with pytest.raises(TypeError):
             array = self.mda.copy()
             array.reorder_levels(x=["level_2", "level_1"], inplace=True)
-            assert_identical(array, expected)
 
         array = DataArray([1, 2], dims="x")
         with pytest.raises(KeyError):
@@ -2321,17 +2333,17 @@ class TestDataArray:
         with pytest.raises(TypeError):
             orig.mean(out=np.ones(orig.shape))
 
-    # skip due to bug in older versions of numpy.nanpercentile
     def test_quantile(self):
         for q in [0.25, [0.50], [0.25, 0.75]]:
             for axis, dim in zip(
                 [None, 0, [0], [0, 1]], [None, "x", ["x"], ["x", "y"]]
             ):
-                actual = self.dv.quantile(q, dim=dim)
+                actual = DataArray(self.va).quantile(q, dim=dim, keep_attrs=True)
                 expected = np.nanpercentile(
                     self.dv.values, np.array(q) * 100, axis=axis
                 )
                 np.testing.assert_allclose(actual.values, expected)
+                assert actual.attrs == self.attrs
 
     def test_reduce_keep_attrs(self):
         # Test dropped attrs
@@ -2487,16 +2499,6 @@ class TestDataArray:
         assert_allclose(expected_sum_axis1, grouped.reduce(np.sum, "y"))
         assert_allclose(expected_sum_axis1, grouped.sum("y"))
 
-    def test_groupby_warning(self):
-        array = self.make_groupby_example_array()
-        grouped = array.groupby("y")
-        with pytest.warns(FutureWarning):
-            grouped.sum()
-
-    @pytest.mark.skipif(
-        LooseVersion(xr.__version__) < LooseVersion("0.13"),
-        reason="not to forget the behavior change",
-    )
     def test_groupby_sum_default(self):
         array = self.make_groupby_example_array()
         grouped = array.groupby("abc")
@@ -2517,7 +2519,7 @@ class TestDataArray:
             }
         )["foo"]
 
-        assert_allclose(expected_sum_all, grouped.sum())
+        assert_allclose(expected_sum_all, grouped.sum(dim="y"))
 
     def test_groupby_count(self):
         array = DataArray(
@@ -3433,6 +3435,19 @@ class TestDataArray:
         expected_da = self.dv.rename(None)
         assert_identical(expected_da, DataArray.from_series(actual).drop(["x", "y"]))
 
+    @requires_sparse
+    def test_from_series_sparse(self):
+        import sparse
+
+        series = pd.Series([1, 2], index=[("a", 1), ("b", 2)])
+
+        actual_sparse = DataArray.from_series(series, sparse=True)
+        actual_dense = DataArray.from_series(series, sparse=False)
+
+        assert isinstance(actual_sparse.data, sparse.COO)
+        actual_sparse.data = actual_sparse.data.todense()
+        assert_identical(actual_sparse, actual_dense)
+
     def test_to_and_from_empty_series(self):
         # GH697
         expected = pd.Series([])
@@ -3693,10 +3708,8 @@ class TestDataArray:
         expected = Dataset({"foo": ("x", [1, 2])})
         assert_identical(expected, actual)
 
-        expected = Dataset({"bar": ("x", [1, 2])})
-        with pytest.warns(FutureWarning):
+        with pytest.raises(TypeError):
             actual = named.to_dataset("bar")
-        assert_identical(expected, actual)
 
     def test_to_dataset_split(self):
         array = DataArray([1, 2, 3], coords=[("x", list("abc"))], attrs={"a": 1})
@@ -4637,3 +4650,36 @@ def test_rolling_exp(da, dim, window_type, window):
     )
 
     assert_allclose(expected.variable, result.variable)
+
+
+def test_no_dict():
+    d = DataArray()
+    with pytest.raises(AttributeError):
+        d.__dict__
+
+
+@pytest.mark.skipif(sys.version_info < (3, 6), reason="requires python3.6 or higher")
+def test_subclass_slots():
+    """Test that DataArray subclasses must explicitly define ``__slots__``.
+
+    .. note::
+       As of 0.13.0, this is actually mitigated into a FutureWarning for any class
+       defined outside of the xarray package.
+    """
+    with pytest.raises(AttributeError) as e:
+
+        class MyArray(DataArray):
+            pass
+
+    assert str(e.value) == "MyArray must explicitly define __slots__"
+
+
+def test_weakref():
+    """Classes with __slots__ are incompatible with the weakref module unless they
+    explicitly state __weakref__ among their slots
+    """
+    from weakref import ref
+
+    a = DataArray(1)
+    r = ref(a)
+    assert r() is a

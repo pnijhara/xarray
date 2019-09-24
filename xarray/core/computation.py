@@ -7,6 +7,7 @@ import operator
 from collections import Counter, OrderedDict
 from distutils.version import LooseVersion
 from typing import (
+    TYPE_CHECKING,
     AbstractSet,
     Any,
     Callable,
@@ -17,7 +18,6 @@ from typing import (
     Sequence,
     Tuple,
     Union,
-    TYPE_CHECKING,
 )
 
 import numpy as np
@@ -50,6 +50,14 @@ class _UFuncSignature:
     output_core_dims : tuple[tuple]
         Core dimension names on each output variable.
     """
+
+    __slots__ = (
+        "input_core_dims",
+        "output_core_dims",
+        "_all_input_core_dims",
+        "_all_output_core_dims",
+        "_all_core_dims",
+    )
 
     def __init__(self, input_core_dims, output_core_dims=((),)):
         self.input_core_dims = tuple(tuple(a) for a in input_core_dims)
@@ -502,9 +510,10 @@ def broadcast_compat_data(variable, broadcast_dims, core_dims):
     missing_core_dims = [d for d in core_dims if d not in set_old_dims]
     if missing_core_dims:
         raise ValueError(
-            "operand to apply_ufunc has required core dimensions %r, but "
-            "some of these are missing on the input variable:  %r"
-            % (list(core_dims), missing_core_dims)
+            "operand to apply_ufunc has required core dimensions {}, but "
+            "some of these dimensions are absent on an input variable: {}".format(
+                list(core_dims), missing_core_dims
+            )
         )
 
     set_new_dims = set(new_dims)
@@ -648,7 +657,6 @@ def apply_variable_ufunc(
 def _apply_blockwise(
     func, args, input_dims, output_dims, signature, output_dtypes, output_sizes=None
 ):
-    import dask.array as da
     from .dask_array_compat import blockwise
 
     if signature.num_outputs > 1:

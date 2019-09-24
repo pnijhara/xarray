@@ -5,12 +5,11 @@ from typing import Hashable, Union
 import numpy as np
 import pandas as pd
 
-from xarray.core import duck_array_ops
-from xarray.core import formatting
+from xarray.core import duck_array_ops, formatting
 from xarray.core.dataarray import DataArray
 from xarray.core.dataset import Dataset
-from xarray.core.variable import IndexVariable, Variable
 from xarray.core.indexes import default_indexes
+from xarray.core.variable import IndexVariable, Variable
 
 
 def _decode_string_data(data):
@@ -198,8 +197,6 @@ def _assert_dataarray_invariants(da: DataArray):
     if da._indexes is not None:
         _assert_indexes_invariants_checks(da._indexes, da._coords, da.dims)
 
-    assert da._initialized is True
-
 
 def _assert_dataset_invariants(ds: Dataset):
     assert isinstance(ds._variables, OrderedDict), type(ds._variables)
@@ -236,7 +233,6 @@ def _assert_dataset_invariants(ds: Dataset):
 
     assert isinstance(ds._encoding, (type(None), dict))
     assert isinstance(ds._attrs, (type(None), OrderedDict))
-    assert ds._initialized is True
 
 
 def _assert_internal_invariants(xarray_obj: Union[DataArray, Dataset, Variable],):

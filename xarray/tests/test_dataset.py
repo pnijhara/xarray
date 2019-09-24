@@ -31,8 +31,8 @@ from xarray.core.npcompat import IS_NEP18_ACTIVE
 from xarray.core.pycompat import integer_types
 
 from . import (
-    LooseVersion,
     InaccessibleArray,
+    LooseVersion,
     UnexpectedDataAccess,
     assert_allclose,
     assert_array_equal,
@@ -46,6 +46,7 @@ from . import (
     requires_dask,
     requires_numbagg,
     requires_scipy,
+    requires_sparse,
     source_ndarray,
 )
 
@@ -1410,115 +1411,77 @@ class TestDataset:
         selected = data.isel(x=0, drop=False)
         assert_identical(expected, selected)
 
-    @pytest.mark.filterwarnings("ignore:Dataset.isel_points")
-    def test_isel_points(self):
+    def test_head(self):
         data = create_test_data()
 
-        pdim1 = [1, 2, 3]
-        pdim2 = [4, 5, 1]
-        pdim3 = [1, 2, 3]
-        actual = data.isel_points(dim1=pdim1, dim2=pdim2, dim3=pdim3, dim="test_coord")
-        assert "test_coord" in actual.dims
-        assert actual.coords["test_coord"].shape == (len(pdim1),)
+        expected = data.isel(time=slice(5), dim2=slice(6))
+        actual = data.head(time=5, dim2=6)
+        assert_equal(expected, actual)
 
-        actual = data.isel_points(dim1=pdim1, dim2=pdim2)
-        assert "points" in actual.dims
-        assert "dim3" in actual.dims
-        assert "dim3" not in actual.data_vars
-        np.testing.assert_array_equal(data["dim2"][pdim2], actual["dim2"])
+        expected = data.isel(time=slice(0))
+        actual = data.head(time=0)
+        assert_equal(expected, actual)
 
-        # test that the order of the indexers doesn't matter
-        assert_identical(
-            data.isel_points(dim1=pdim1, dim2=pdim2),
-            data.isel_points(dim2=pdim2, dim1=pdim1),
-        )
+        expected = data.isel({dim: slice(6) for dim in data.dims})
+        actual = data.head(6)
+        assert_equal(expected, actual)
 
-        # make sure we're raising errors in the right places
-        with raises_regex(ValueError, "All indexers must be the same length"):
-            data.isel_points(dim1=[1, 2], dim2=[1, 2, 3])
-        with raises_regex(ValueError, "dimension bad_key does not exist"):
-            data.isel_points(bad_key=[1, 2])
-        with raises_regex(TypeError, "Indexers must be integers"):
-            data.isel_points(dim1=[1.5, 2.2])
-        with raises_regex(TypeError, "Indexers must be integers"):
-            data.isel_points(dim1=[1, 2, 3], dim2=slice(3))
-        with raises_regex(ValueError, "Indexers must be 1 dimensional"):
-            data.isel_points(dim1=1, dim2=2)
-        with raises_regex(ValueError, "Existing dimension names are not valid"):
-            data.isel_points(dim1=[1, 2], dim2=[1, 2], dim="dim2")
+        expected = data.isel({dim: slice(5) for dim in data.dims})
+        actual = data.head()
+        assert_equal(expected, actual)
 
-        # test to be sure we keep around variables that were not indexed
-        ds = Dataset({"x": [1, 2, 3, 4], "y": 0})
-        actual = ds.isel_points(x=[0, 1, 2])
-        assert_identical(ds["y"], actual["y"])
+        with raises_regex(TypeError, "either dict-like or a single int"):
+            data.head([3])
+        with raises_regex(TypeError, "expected integer type"):
+            data.head(dim2=3.1)
+        with raises_regex(ValueError, "expected positive int"):
+            data.head(time=-3)
 
-        # tests using index or DataArray as a dim
-        stations = Dataset()
-        stations["station"] = ("station", ["A", "B", "C"])
-        stations["dim1s"] = ("station", [1, 2, 3])
-        stations["dim2s"] = ("station", [4, 5, 1])
-
-        actual = data.isel_points(
-            dim1=stations["dim1s"], dim2=stations["dim2s"], dim=stations["station"]
-        )
-        assert "station" in actual.coords
-        assert "station" in actual.dims
-        assert_identical(actual["station"].drop(["dim2"]), stations["station"])
-
-        # make sure we get the default 'points' coordinate when passed a list
-        actual = data.isel_points(
-            dim1=stations["dim1s"], dim2=stations["dim2s"], dim=["A", "B", "C"]
-        )
-        assert "points" in actual.coords
-        assert actual.coords["points"].values.tolist() == ["A", "B", "C"]
-
-        # test index
-        actual = data.isel_points(
-            dim1=stations["dim1s"].values,
-            dim2=stations["dim2s"].values,
-            dim=pd.Index(["A", "B", "C"], name="letters"),
-        )
-        assert "letters" in actual.coords
-
-        # can pass a numpy array
-        data.isel_points(
-            dim1=stations["dim1s"], dim2=stations["dim2s"], dim=np.array([4, 5, 6])
-        )
-
-    @pytest.mark.filterwarnings("ignore:Dataset.sel_points")
-    @pytest.mark.filterwarnings("ignore:Dataset.isel_points")
-    def test_sel_points(self):
+    def test_tail(self):
         data = create_test_data()
 
-        # add in a range() index
-        data["dim1"] = data.dim1
+        expected = data.isel(time=slice(-5, None), dim2=slice(-6, None))
+        actual = data.tail(time=5, dim2=6)
+        assert_equal(expected, actual)
 
-        pdim1 = [1, 2, 3]
-        pdim2 = [4, 5, 1]
-        pdim3 = [1, 2, 3]
-        expected = data.isel_points(
-            dim1=pdim1, dim2=pdim2, dim3=pdim3, dim="test_coord"
-        )
-        actual = data.sel_points(
-            dim1=data.dim1[pdim1],
-            dim2=data.dim2[pdim2],
-            dim3=data.dim3[pdim3],
-            dim="test_coord",
-        )
-        assert_identical(expected, actual)
+        expected = data.isel(dim1=slice(0))
+        actual = data.tail(dim1=0)
+        assert_equal(expected, actual)
 
-        data = Dataset({"foo": (("x", "y"), np.arange(9).reshape(3, 3))})
-        expected = Dataset({"foo": ("points", [0, 4, 8])})
-        actual = data.sel_points(x=[0, 1, 2], y=[0, 1, 2])
-        assert_identical(expected, actual)
+        expected = data.isel({dim: slice(-6, None) for dim in data.dims})
+        actual = data.tail(6)
+        assert_equal(expected, actual)
 
-        data.coords.update({"x": [0, 1, 2], "y": [0, 1, 2]})
-        expected.coords.update({"x": ("points", [0, 1, 2]), "y": ("points", [0, 1, 2])})
-        actual = data.sel_points(x=[0.1, 1.1, 2.5], y=[0, 1.2, 2.0], method="pad")
-        assert_identical(expected, actual)
+        expected = data.isel({dim: slice(-5, None) for dim in data.dims})
+        actual = data.tail()
+        assert_equal(expected, actual)
 
-        with pytest.raises(KeyError):
-            data.sel_points(x=[2.5], y=[2.0], method="pad", tolerance=1e-3)
+        with raises_regex(TypeError, "either dict-like or a single int"):
+            data.tail([3])
+        with raises_regex(TypeError, "expected integer type"):
+            data.tail(dim2=3.1)
+        with raises_regex(ValueError, "expected positive int"):
+            data.tail(time=-3)
+
+    def test_thin(self):
+        data = create_test_data()
+
+        expected = data.isel(time=slice(None, None, 5), dim2=slice(None, None, 6))
+        actual = data.thin(time=5, dim2=6)
+        assert_equal(expected, actual)
+
+        expected = data.isel({dim: slice(None, None, 6) for dim in data.dims})
+        actual = data.thin(6)
+        assert_equal(expected, actual)
+
+        with raises_regex(TypeError, "either dict-like or a single int"):
+            data.thin([3])
+        with raises_regex(TypeError, "expected integer type"):
+            data.thin(dim2=3.1)
+        with raises_regex(ValueError, "cannot be zero"):
+            data.thin(time=0)
+        with raises_regex(ValueError, "expected positive int"):
+            data.thin(time=-3)
 
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_sel_fancy(self):
@@ -1766,9 +1729,8 @@ class TestDataset:
         # regression test for #279
         expected = Dataset({"x": ("time", np.random.randn(5))}, {"time": range(5)})
         time2 = DataArray(np.arange(5), dims="time2")
-        with pytest.warns(FutureWarning):
+        with pytest.raises(ValueError):
             actual = expected.reindex(time=time2)
-        assert_identical(actual, expected)
 
         # another regression test
         ds = Dataset(
@@ -1784,11 +1746,10 @@ class TestDataset:
     def test_reindex_warning(self):
         data = create_test_data()
 
-        with pytest.warns(FutureWarning) as ws:
+        with pytest.raises(ValueError):
             # DataArray with different dimension raises Future warning
             ind = xr.DataArray([0.0, 1.0], dims=["new_dim"], name="ind")
             data.reindex(dim2=ind)
-            assert any(["Indexer has dimensions " in str(w.message) for w in ws])
 
         # Should not warn
         ind = xr.DataArray([0.0, 1.0], dims=["dim2"], name="ind")
@@ -2214,13 +2175,20 @@ class TestDataset:
         # Basic functionality.
         assert len(data.coords["x"]) == 2
 
-        # This API is allowed but deprecated.
+        # In the future, this will break.
         with pytest.warns(DeprecationWarning):
             ds1 = data.drop(["a"], dim="x")
         ds2 = data.drop(x="a")
         ds3 = data.drop(x=["a"])
         ds4 = data.drop(x=["a", "b"])
         ds5 = data.drop(x=["a", "b"], y=range(0, 6, 2))
+
+        # In the future, this will result in different behavior.
+        arr = DataArray(range(3), dims=["c"])
+        with pytest.warns(FutureWarning):
+            data.drop(arr.coords)
+        with pytest.warns(FutureWarning):
+            data.drop(arr.indexes)
 
         assert_array_equal(ds1.coords["x"], ["b"])
         assert_array_equal(ds2.coords["x"], ["b"])
@@ -2428,18 +2396,11 @@ class TestDataset:
         renamed = data.rename(newnames)
         assert_identical(renamed, data)
 
-    @pytest.mark.filterwarnings("ignore:The inplace argument")
     def test_rename_inplace(self):
         times = pd.date_range("2000-01-01", periods=3)
         data = Dataset({"z": ("x", [2, 3, 4]), "t": ("t", times)})
-        copied = data.copy()
-        renamed = data.rename({"x": "y"})
-        data.rename({"x": "y"}, inplace=True)
-        assert_identical(data, renamed)
-        assert not data.equals(copied)
-        assert data.dims == {"y": 3, "t": 3}
-        # check virtual variables
-        assert_array_equal(data["t.dayofyear"], [1, 2, 3])
+        with pytest.raises(TypeError):
+            data.rename({"x": "y"}, inplace=True)
 
     def test_rename_dims(self):
         original = Dataset({"x": ("x", [0, 1, 2]), "y": ("x", [10, 11, 12]), "z": 42})
@@ -2702,7 +2663,7 @@ class TestDataset:
         obj = ds.set_index(x=mindex.names)
         assert_identical(obj, expected)
 
-        with pytest.warns(FutureWarning, match="The inplace argument"):
+        with pytest.raises(TypeError):
             ds.set_index(x=mindex.names, inplace=True)
             assert_identical(ds, expected)
 
@@ -2727,9 +2688,8 @@ class TestDataset:
         obj = ds.reset_index("x")
         assert_identical(obj, expected)
 
-        with pytest.warns(FutureWarning, match="The inplace argument"):
+        with pytest.raises(TypeError):
             ds.reset_index("x", inplace=True)
-            assert_identical(ds, expected)
 
     def test_reorder_levels(self):
         ds = create_test_multiindex()
@@ -2740,9 +2700,8 @@ class TestDataset:
         reindexed = ds.reorder_levels(x=["level_2", "level_1"])
         assert_identical(reindexed, expected)
 
-        with pytest.warns(FutureWarning, match="The inplace argument"):
+        with pytest.raises(TypeError):
             ds.reorder_levels(x=["level_2", "level_1"], inplace=True)
-            assert_identical(ds, expected)
 
         ds = Dataset({}, coords={"x": [1, 2]})
         with raises_regex(ValueError, "has no MultiIndex"):
@@ -2882,11 +2841,8 @@ class TestDataset:
         assert actual_result is actual
         assert_identical(expected, actual)
 
-        with pytest.warns(FutureWarning, match="The inplace argument"):
+        with pytest.raises(TypeError):
             actual = data.update(data, inplace=False)
-            expected = data
-            assert actual is not expected
-            assert_identical(expected, actual)
 
         other = Dataset(attrs={"new": "attr"})
         actual = data.copy()
@@ -3411,18 +3367,6 @@ class TestDataset:
         actual = data.groupby("letters").mean(ALL_DIMS)
         assert_allclose(expected, actual)
 
-    def test_groupby_warn(self):
-        data = Dataset(
-            {
-                "xy": (["x", "y"], np.random.randn(3, 4)),
-                "xonly": ("x", np.random.randn(3)),
-                "yonly": ("y", np.random.randn(4)),
-                "letters": ("y", ["a", "a", "b", "b"]),
-            }
-        )
-        with pytest.warns(FutureWarning):
-            data.groupby("x").mean()
-
     def test_groupby_math(self):
         def reorder_dims(x):
             return x.transpose("dim1", "dim2", "dim3", "time")
@@ -3767,6 +3711,28 @@ class TestDataset:
         idx = pd.MultiIndex.from_arrays([[0], [1]], names=["x", "y"])
         expected = pd.DataFrame([[]], index=idx)
         assert expected.equals(actual), (expected, actual)
+
+    @requires_sparse
+    def test_from_dataframe_sparse(self):
+        import sparse
+
+        df_base = pd.DataFrame(
+            {"x": range(10), "y": list("abcdefghij"), "z": np.arange(0, 100, 10)}
+        )
+
+        ds_sparse = Dataset.from_dataframe(df_base.set_index("x"), sparse=True)
+        ds_dense = Dataset.from_dataframe(df_base.set_index("x"), sparse=False)
+        assert isinstance(ds_sparse["y"].data, sparse.COO)
+        assert isinstance(ds_sparse["z"].data, sparse.COO)
+        ds_sparse["y"].data = ds_sparse["y"].data.todense()
+        ds_sparse["z"].data = ds_sparse["z"].data.todense()
+        assert_identical(ds_dense, ds_sparse)
+
+        ds_sparse = Dataset.from_dataframe(df_base.set_index(["x", "y"]), sparse=True)
+        ds_dense = Dataset.from_dataframe(df_base.set_index(["x", "y"]), sparse=False)
+        assert isinstance(ds_sparse["z"].data, sparse.COO)
+        ds_sparse["z"].data = ds_sparse["z"].data.todense()
+        assert_identical(ds_dense, ds_sparse)
 
     def test_to_and_from_empty_dataframe(self):
         # GH697
@@ -4920,7 +4886,7 @@ class TestDataset:
                 "temperature_10": (["t"], [0], temp10),
                 "precipitation": (["t"], [0], precip),
             },
-            coords={"time": (["t"], [0], dict(axis="T"))},
+            coords={"time": (["t"], [0], dict(axis="T", long_name="time_in_seconds"))},
         )
 
         # Test return empty Dataset.
@@ -4933,6 +4899,11 @@ class TestDataset:
         assert new_ds["precipitation"].standard_name == "convective_precipitation_flux"
 
         assert_equal(new_ds["precipitation"], ds["precipitation"])
+
+        # Test filter coordinates
+        new_ds = ds.filter_by_attrs(long_name="time_in_seconds")
+        assert new_ds["time"].long_name == "time_in_seconds"
+        assert not bool(new_ds.data_vars)
 
         # Test return more than one DataArray.
         new_ds = ds.filter_by_attrs(standard_name="air_potential_temperature")
@@ -5793,3 +5764,36 @@ def test_trapz_datetime(dask, which_datetime):
 
     actual2 = da.integrate("time", datetime_unit="h")
     assert_allclose(actual, actual2 / 24.0)
+
+
+def test_no_dict():
+    d = Dataset()
+    with pytest.raises(AttributeError):
+        d.__dict__
+
+
+@pytest.mark.skipif(sys.version_info < (3, 6), reason="requires python3.6 or higher")
+def test_subclass_slots():
+    """Test that Dataset subclasses must explicitly define ``__slots__``.
+
+    .. note::
+       As of 0.13.0, this is actually mitigated into a FutureWarning for any class
+       defined outside of the xarray package.
+    """
+    with pytest.raises(AttributeError) as e:
+
+        class MyDS(Dataset):
+            pass
+
+    assert str(e.value) == "MyDS must explicitly define __slots__"
+
+
+def test_weakref():
+    """Classes with __slots__ are incompatible with the weakref module unless they
+    explicitly state __weakref__ among their slots
+    """
+    from weakref import ref
+
+    ds = Dataset()
+    r = ref(ds)
+    assert r() is ds

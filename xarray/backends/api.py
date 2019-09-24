@@ -6,6 +6,7 @@ from numbers import Number
 from pathlib import Path
 from textwrap import dedent
 from typing import (
+    TYPE_CHECKING,
     Callable,
     Dict,
     Hashable,
@@ -13,21 +14,19 @@ from typing import (
     Mapping,
     Tuple,
     Union,
-    TYPE_CHECKING,
 )
 
 import numpy as np
 
-from .. import Dataset, DataArray, backends, conventions, coding
+from .. import DataArray, Dataset, auto_combine, backends, coding, conventions
 from ..core import indexing
-from .. import auto_combine
 from ..core.combine import (
-    combine_by_coords,
-    _nested_combine,
     _infer_concat_order_from_positions,
+    _nested_combine,
+    combine_by_coords,
 )
 from ..core.utils import close_on_error, is_grib_path, is_remote_uri
-from .common import ArrayWriter, AbstractDataStore
+from .common import AbstractDataStore, ArrayWriter
 from .locks import _get_scheduler
 
 if TYPE_CHECKING:
@@ -695,6 +694,8 @@ def open_dataarray(
 
 
 class _MultiFileCloser:
+    __slots__ = ("file_objs",)
+
     def __init__(self, file_objs):
         self.file_objs = file_objs
 
@@ -760,7 +761,7 @@ def open_mfdataset(
         `xarray.auto_combine` is used, but in the future this behavior will 
         switch to use `xarray.combine_by_coords` by default.
     compat : {'identical', 'equals', 'broadcast_equals',
-              'no_conflicts'}, optional
+              'no_conflicts', 'override'}, optional
         String indicating how to compare variables of the same name for
         potential conflicts when merging:
          * 'broadcast_equals': all values must be equal when variables are
@@ -771,6 +772,7 @@ def open_mfdataset(
          * 'no_conflicts': only values which are not null in both datasets
            must be equal. The returned dataset then contains the combination
            of all non-null values.
+         * 'override': skip comparing and pick variable from first dataset
     preprocess : callable, optional
         If provided, call this function on each dataset prior to concatenation.
         You can find the file-name from which each dataset was loaded in
@@ -913,7 +915,7 @@ def open_mfdataset(
             # Remove this after deprecation cycle from #2616 is complete
             basic_msg = dedent(
                 """\
-            In xarray version 0.13 the default behaviour of `open_mfdataset`
+            In xarray version 0.14 the default behaviour of `open_mfdataset`
             will change. To retain the existing behavior, pass
             combine='nested'. To use future default behavior, pass
             combine='by_coords'. See
