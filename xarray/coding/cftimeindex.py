@@ -403,7 +403,7 @@ class CFTimeIndex(pd.Index):
         from .cftime_offsets import to_offset
 
         if not isinstance(n, int):
-            raise TypeError("'n' must be an int, got {}.".format(n))
+            raise TypeError(f"'n' must be an int, got {n}.")
         if isinstance(freq, timedelta):
             return self + n * freq
         elif isinstance(freq, str):
@@ -436,11 +436,6 @@ class CFTimeIndex(pd.Index):
 
     def __rsub__(self, other):
         return pd.TimedeltaIndex(other - np.array(self))
-
-    def _add_delta(self, deltas):
-        # To support TimedeltaIndex + CFTimeIndex with older versions of
-        # pandas.  No longer used as of pandas 0.23.
-        return self + deltas
 
     def to_datetimeindex(self, unsafe=False):
         """If possible, convert this index to a pandas.DatetimeIndex.
