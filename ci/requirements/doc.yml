@@ -9,6 +9,7 @@ dependencies:
   - h5netcdf
   - ipython
   - iris
+  - nbsphinx
   - netcdf4
   - numpy
   - numpydoc
